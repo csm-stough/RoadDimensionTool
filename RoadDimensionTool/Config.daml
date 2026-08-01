@@ -23,12 +23,12 @@
               an empty group-->
         <group id="RoadDimensionTool_Group1" caption="Group 1" appearsOnAddInTab="true">
           <!-- host controls within groups -->
-          <tool refID="RoadDimensionTool_MapTool1" size="large" />
+          <tool refID="RoadDimensionTool" size="large" />
         </group>
       </groups>
       <controls>
         <!-- add your controls here -->
-        <tool id="RoadDimensionTool_MapTool1" caption="MapTool 1" className="MapTool1" loadOnClick="true" smallImage="GenericButtonRed16" largeImage="GenericButtonRed32" condition="esri_mapping_mapPane">
+        <tool id="RoadDimensionTool" caption="Road Dimensioner" className="RoadDimensionTool" loadOnClick="true" smallImage="GenericButtonRed16" largeImage="GenericButtonRed32" condition="esri_mapping_mapPane">
           <tooltip heading="Tooltip Heading">Tooltip text<disabledText /></tooltip>
         </tool>
       </controls>
