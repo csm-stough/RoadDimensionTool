@@ -8,11 +8,29 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using static ArcGIS.Desktop.Internal.Framework.EsriPBf.Tile.Types;
+using static RoadDimensionTool.RoadDimensionTool;
 
 namespace RoadDimensionTool
 {
     internal class RoadDimensionTool : MapTool
     {
+        private readonly string DimensionFeatureLayer = "DimensionLine";
+
+        internal enum BoundaryType
+        {
+            ROW,
+            EOP,
+            BOC,
+            UE
+        }
+
+        internal class IntersectionPoint
+        {
+            public MapPoint Point { get; set; }
+
+            public BoundaryType BoundaryType { get; set; }
+        }
 
         private readonly List<string> intersection_layers = new List<string>
         {
@@ -29,61 +47,82 @@ namespace RoadDimensionTool
 
         protected override async Task<bool> OnSketchCompleteAsync(Geometry geometry)
         {
-            if (geometry is not Polyline line)
+            if (geometry is not Polyline sketch)
                 return false;
 
             var dimensionId = Guid.NewGuid();
-
             //await CreateDimensionLines(line, dimensionId);
-            await QueuedTask.Run(() =>
-            {
-                var points = FindIntersections(line);
 
-                var orderedIntersections = OrderIntersections(line, points);
-
-                foreach (var point in orderedIntersections)
-                {
-                    System.Diagnostics.Debug.WriteLine(point);
-                }
-            });
-
-            return true;
-        }
-
-
-        private async Task CreateDimensionLines(Polyline line, Guid dimensionId)
-        {
             await QueuedTask.Run(() =>
             {
                 var layer = MapView.Active.Map
                     .GetLayersAsFlattenedList()
                     .OfType<FeatureLayer>()
-                    .FirstOrDefault(l => l.Name == "DimensionLine");
+                    .FirstOrDefault(l => l.Name == DimensionFeatureLayer);
 
-                if (layer == null)
+                var offsetSketch = OffsetLine(
+                    sketch,
+                    20);
+
+                var ROWpoints = FindIntersections(sketch);
+                var offsetPoints = FindIntersections(offsetSketch); 
+
+                var orderedROWIntersections = OrderIntersections(sketch, ROWpoints);
+                var orderedOffsetIntersections = OrderIntersections(sketch, offsetPoints);
+
+                var rowPoints = ROWpoints
+                    .Where(i => i.BoundaryType == BoundaryType.ROW)
+                    .ToList();
+
+                if (rowPoints.Count != 2)
                     return;
-
 
                 var editOperation = new EditOperation
                 {
-                    Name = "Create Road Dimension Line"
+                    Name = "Create Road Dimension"
                 };
 
-                editOperation.Create(
+                CreateDimensionLine(
+                    editOperation,
                     layer,
-                    line,
-                    new Dictionary<string, object>
-                    {
-                        { "DisplayLength", null },
-                        { "DimID", dimensionId},
-                        { "DimSide", "C"}
-                    });
+                    rowPoints[0].Point,
+                    rowPoints[1].Point,
+                    dimensionId);
 
-                // Offset measurement line
-                var offsetLine = OffsetLine(line, 20);
+                for (int i = 0; i < orderedOffsetIntersections.Count - 1; i++)
+                {
+                    CreateDimensionLine(
+                        editOperation,
+                        layer,
+                        orderedOffsetIntersections[i].Point,
+                        orderedOffsetIntersections[i + 1].Point,
+                        dimensionId);
+                }
 
                 editOperation.Execute();
             });
+
+            return true;
+        }
+        private void CreateDimensionLine(
+            EditOperation editOperation,
+            FeatureLayer layer,
+            MapPoint startPoint,
+            MapPoint endPoint,
+            Guid dimensionId)
+        {
+            var line = PolylineBuilderEx.CreatePolyline(
+                new[] { startPoint, endPoint });
+
+            editOperation.Create(
+                layer,
+                line,
+                new Dictionary<string, object>
+                {
+                    { "DisplayLength", null },
+                    { "DimID", dimensionId},
+                    { "DimSide", "C"}
+                });
         }
 
         private Polyline OffsetLine(Polyline line, double distance)
@@ -106,19 +145,23 @@ namespace RoadDimensionTool
                 .ToList();
         }
 
-        private List<MapPoint> FindIntersections(Polyline sketch)
+        private List<IntersectionPoint> FindIntersections(Polyline sketch)
         {
-            var intersections = new List<MapPoint>();
+            var intersections = new List<IntersectionPoint>();
 
             var layers = GetIntersectionLayers();
 
             foreach (var layer in GetIntersectionLayers())
             {
+
+                var boundaryType =
+                    layer.Name == "Right of Way" ? BoundaryType.ROW : BoundaryType.EOP;
+
                 using var cursor = layer.Search();
 
                 while (cursor.MoveNext())
                 {
-                    var feature = cursor.Current as Feature;
+                    using var feature = (ArcGIS.Core.Data.Feature)cursor.Current;
 
                     var intersection =
                         GeometryEngine.Instance.Intersection(
@@ -128,34 +171,40 @@ namespace RoadDimensionTool
 
                     if (intersection is Multipoint multipoint)
                     {
-                        intersections.AddRange(
-                            multipoint.Points);
+                        foreach (var point in multipoint.Points)
+                        {
+                            intersections.Add(new IntersectionPoint
+                            {
+                                Point = point,
+                                BoundaryType = boundaryType
+                            });
+                        }
                     }
                 }
             }
 
-            return intersections;
+            return OrderIntersections(sketch, intersections);
         }
 
-        private List<MapPoint> OrderIntersections(
+        private List<IntersectionPoint> OrderIntersections(
             Polyline sketch,
-            List<MapPoint> points)
-        {
-            return points
-                .OrderBy(point =>
+            List<IntersectionPoint> intersections)
                 {
-                    GeometryEngine.Instance.QueryPointAndDistance(
-                        sketch,
-                        SegmentExtensionType.NoExtension,
-                        point,
-                        AsRatioOrLength.AsLength,
-                        out double distanceAlongCurve,
-                        out _,
-                        out _);
+                    return intersections
+                        .OrderBy(i =>
+                        {
+                            GeometryEngine.Instance.QueryPointAndDistance(
+                                sketch,
+                                SegmentExtensionType.NoExtension,
+                                i.Point,
+                                AsRatioOrLength.AsLength,
+                                out double distanceAlongCurve,
+                                out _,
+                                out _);
 
-                    return distanceAlongCurve;
-                })
-                .ToList();
+                            return distanceAlongCurve;
+                        })
+                        .ToList();
         }
     }
 }
