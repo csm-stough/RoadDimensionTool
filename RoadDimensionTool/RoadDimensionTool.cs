@@ -16,6 +16,7 @@ namespace RoadDimensionTool
     internal class RoadDimensionTool : MapTool
     {
         private readonly string DimensionFeatureLayer = "DimensionLine";
+        private const double DimensionOffset = 5.0;
 
         internal enum BoundaryType
         {
@@ -62,7 +63,7 @@ namespace RoadDimensionTool
 
                 var offsetSketch = OffsetLine(
                     sketch,
-                    20);
+                    DimensionOffset);
 
                 var ROWpoints = FindIntersections(sketch);
                 var offsetPoints = FindIntersections(offsetSketch); 
@@ -82,12 +83,25 @@ namespace RoadDimensionTool
                     Name = "Create Road Dimension"
                 };
 
+                //Checking dimension sums for symbology changes
+                double ROW_sum = GeometryEngine.Instance.Distance(rowPoints[0].Point, rowPoints[1].Point);
+                double SHLDR_EOP_sum = 0;
+                for (int i = 0; i < orderedOffsetIntersections.Count - 1; i++)
+                {
+                    double dist = GeometryEngine.Instance.Distance(orderedOffsetIntersections[i].Point, orderedOffsetIntersections[i + 1].Point);
+                    SHLDR_EOP_sum += dist;
+                }
+
+                var checkMeasurement = (int)ROW_sum == (int)SHLDR_EOP_sum ? "No" : "Yes";
+
                 CreateDimensionLine(
                     editOperation,
                     layer,
                     rowPoints[0].Point,
                     rowPoints[1].Point,
-                    dimensionId);
+                    dimensionId,
+                    GetDimensionPrefix(rowPoints[0].BoundaryType, rowPoints[1].BoundaryType),
+                    checkMeasurement);
 
                 for (int i = 0; i < orderedOffsetIntersections.Count - 1; i++)
                 {
@@ -96,7 +110,9 @@ namespace RoadDimensionTool
                         layer,
                         orderedOffsetIntersections[i].Point,
                         orderedOffsetIntersections[i + 1].Point,
-                        dimensionId);
+                        dimensionId,
+                        GetDimensionPrefix(orderedOffsetIntersections[i].BoundaryType, orderedOffsetIntersections[i + 1].BoundaryType),
+                        checkMeasurement);
                 }
 
                 editOperation.Execute();
@@ -109,7 +125,9 @@ namespace RoadDimensionTool
             FeatureLayer layer,
             MapPoint startPoint,
             MapPoint endPoint,
-            Guid dimensionId)
+            Guid dimensionId,
+            String prefix = "",
+            string checkMeasurement = "No")
         {
             var line = PolylineBuilderEx.CreatePolyline(
                 new[] { startPoint, endPoint });
@@ -121,7 +139,9 @@ namespace RoadDimensionTool
                 {
                     { "DisplayLength", null },
                     { "DimID", dimensionId},
-                    { "DimSide", "C"}
+                    { "DimSide", "C"},
+                    { "Prefix", prefix},
+                    { "CheckMeasurement", checkMeasurement}
                 });
         }
 
@@ -154,6 +174,7 @@ namespace RoadDimensionTool
             foreach (var layer in GetIntersectionLayers())
             {
 
+                //TODO: Replace with some way to check --> if EOP, check the subtype instead
                 var boundaryType =
                     layer.Name == "Right of Way" ? BoundaryType.ROW : BoundaryType.EOP;
 
@@ -183,7 +204,7 @@ namespace RoadDimensionTool
                 }
             }
 
-            return OrderIntersections(sketch, intersections);
+            return intersections;
         }
 
         private List<IntersectionPoint> OrderIntersections(
@@ -205,6 +226,23 @@ namespace RoadDimensionTool
                             return distanceAlongCurve;
                         })
                         .ToList();
+        }
+
+        private string GetDimensionPrefix(
+            BoundaryType startType,
+            BoundaryType endType)
+        {
+            if (startType != endType)
+                return string.Empty;
+
+            return startType switch
+            {
+                BoundaryType.ROW => "ROW",
+                BoundaryType.EOP => "EOP",
+                BoundaryType.BOC => "BOC",
+                BoundaryType.UE => "UE",
+                _ => string.Empty
+            };
         }
     }
 }
