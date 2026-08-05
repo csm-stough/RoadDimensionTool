@@ -1,6 +1,4 @@
-﻿using ArcGIS.Core.CIM;
-using ArcGIS.Core.Data;
-using ArcGIS.Core.Geometry;
+﻿using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Editing;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
@@ -8,8 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using static ArcGIS.Desktop.Internal.Framework.EsriPBf.Tile.Types;
-using static RoadDimensionTool.RoadDimensionTool;
 
 namespace RoadDimensionTool
 {
@@ -17,6 +13,10 @@ namespace RoadDimensionTool
     {
         private readonly string DimensionFeatureLayer = "DimensionLine";
         private const double DimensionOffset = 5.0;
+        private readonly List<string> intersection_layers = new List<string>
+        {
+            "Right of Way", "Edge of Pavement", "Back of Curb", "Easement"
+        };
 
         internal enum BoundaryType
         {
@@ -32,11 +32,6 @@ namespace RoadDimensionTool
 
             public BoundaryType BoundaryType { get; set; }
         }
-
-        private readonly List<string> intersection_layers = new List<string>
-        {
-            "Right of Way", "Edge of Pavement", "Back of Curb", "Easement"
-        };
 
         public RoadDimensionTool()
         {
@@ -69,7 +64,7 @@ namespace RoadDimensionTool
                 var offsetPoints = FindIntersections(offsetSketch); 
 
                 var orderedROWIntersections = OrderIntersections(sketch, ROWpoints);
-                var orderedOffsetIntersections = OrderIntersections(sketch, offsetPoints);
+                var orderedOffsetIntersections = OrderIntersections(offsetSketch, offsetPoints);
 
                 var rowPoints = ROWpoints
                     .Where(i => i.BoundaryType == BoundaryType.ROW)
@@ -77,11 +72,6 @@ namespace RoadDimensionTool
 
                 if (rowPoints.Count != 2)
                     return;
-
-                var editOperation = new EditOperation
-                {
-                    Name = "Create Road Dimension"
-                };
 
                 //Checking dimension sums for symbology changes
                 double ROW_sum = GeometryEngine.Instance.Distance(rowPoints[0].Point, rowPoints[1].Point);
@@ -92,7 +82,12 @@ namespace RoadDimensionTool
                     SHLDR_EOP_sum += dist;
                 }
 
-                var checkMeasurement = (int)ROW_sum == (int)SHLDR_EOP_sum ? "No" : "Yes";
+                var checkMeasurement = ((int)ROW_sum == (int)SHLDR_EOP_sum) ? "No" : "Yes";
+
+                var editOperation = new EditOperation
+                {
+                    Name = "Create Road Dimensions"
+                };
 
                 CreateDimensionLine(
                     editOperation,
@@ -175,8 +170,7 @@ namespace RoadDimensionTool
             {
 
                 //TODO: Replace with some way to check --> if EOP, check the subtype instead
-                var boundaryType =
-                    layer.Name == "Right of Way" ? BoundaryType.ROW : BoundaryType.EOP;
+                var boundaryType = layer.Name == "Right of Way" ? BoundaryType.ROW : BoundaryType.EOP;
 
                 using var cursor = layer.Search();
 
